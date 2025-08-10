@@ -20,9 +20,10 @@ import com.linecorp.cse.reqshield.support.constant.ConfigValues.LOCK_MONITOR_INT
 import com.linecorp.cse.reqshield.support.utils.nowToEpochTime
 import org.slf4j.LoggerFactory
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 
 private val log = LoggerFactory.getLogger(KeyLocalLock::class.java)
 
@@ -31,20 +32,17 @@ class KeyLocalLock(private val lockTimeoutMillis: Long) : KeyLock {
 
     private val lockMap = ConcurrentHashMap<String, LockInfo>()
 
-    private val executorService: ExecutorService = Executors.newSingleThreadExecutor()
+    private val scheduledExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
 
     init {
-        executorService.execute {
-            while (true) {
-                try {
-                    val now = System.currentTimeMillis()
-                    lockMap.entries.removeIf { now - it.value.createdAt > lockTimeoutMillis }
-                    Thread.sleep(LOCK_MONITOR_INTERVAL_MILLIS)
-                } catch (e: InterruptedException) {
-                    log.error("Error in lock lifecycle monitoring : {}", e.message)
-                }
+        scheduledExecutor.scheduleWithFixedDelay({
+            try {
+                val now = System.currentTimeMillis()
+                lockMap.entries.removeIf { now - it.value.createdAt > lockTimeoutMillis }
+            } catch (e: Exception) {
+                log.error("Error in lock lifecycle monitoring : {}", e.message)
             }
-        }
+        }, 0, LOCK_MONITOR_INTERVAL_MILLIS, TimeUnit.MILLISECONDS)
     }
 
     override fun tryLock(
@@ -68,5 +66,16 @@ class KeyLocalLock(private val lockTimeoutMillis: Long) : KeyLock {
             lockMap.remove(completeKey)
         }
         return true
+    }
+
+    fun shutdown() {
+        scheduledExecutor.shutdown()
+        try {
+            if (!scheduledExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduledExecutor.shutdownNow()
+            }
+        } catch (_: InterruptedException) {
+            scheduledExecutor.shutdownNow()
+        }
     }
 }
