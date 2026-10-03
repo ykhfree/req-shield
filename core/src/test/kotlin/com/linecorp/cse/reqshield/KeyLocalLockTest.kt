@@ -725,6 +725,22 @@ class KeyLocalLockTest : BaseKeyLockTest {
         keyLock.shutdown()
     }
 
+    @Test
+    fun `monitor keeps a held lock that has not expired`() {
+        // A long lock timeout means no sweep may treat this lock as expired.
+        val keyLock = KeyLocalLock(60_000L)
+        val key = "monitor-keeps-live-lock-${java.util.UUID.randomUUID()}"
+        val token = assertNotNull(keyLock.tryLock(key, LockType.CREATE))
+
+        // Let the monitor sweep the map at least twice while the lock is held.
+        Thread.sleep(LOCK_MONITOR_INTERVAL_MILLIS * 2 + 500L)
+
+        assertNull(keyLock.tryLock(key, LockType.CREATE), "a live lock must still exclude other callers")
+        assertTrue(keyLock.unLock(key, LockType.CREATE, token), "the holder must still own its live lock")
+
+        keyLock.shutdown()
+    }
+
     /** Mirrors KeyLocalLock's private buildLockKey so the test can look up the same map key. */
     private fun buildLockKeyForTest(
         key: String,
